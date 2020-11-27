@@ -3,113 +3,85 @@
 
 #[allow(unused)]
 // use panic_halt;
-
 use stm32f4xx_hal as hal;
-use ws2812_timer_delay as ws2812;
+use ws2812_spi as ws2812;
 
-use crate::hal::delay::Delay;
 use crate::hal::prelude::*;
 use crate::hal::stm32;
-use crate::hal::time::*;
-use crate::hal::timer::*;
 use crate::ws2812::Ws2812;
-use hal::prelude::*;
-
-use embedded_hal::digital::v2::OutputPin;
+use hal::spi::Spi;
 
 use cortex_m::peripheral::Peripherals;
 
-use smart_leds::{brightness, SmartLedsWrite, RGB8, gamma};
+use smart_leds::{brightness, gamma, SmartLedsWrite, RGB8};
 // use rtt_target::{rprintln, rtt_init_print};
-use panic_rtt_core::{self, rtt_init_print, rprintln};
+use panic_rtt_core::{self, rprintln, rtt_init_print};
 
 use cortex_m_rt::entry;
 use stm32f4xx_hal::gpio::GpioExt;
-use stm32f4xx_hal::time::MegaHertz;
 use stm32f4xx_hal::hal::blocking::delay::DelayMs;
 
 #[entry]
 fn main() -> ! {
-    //rtt_init_print!(NoBlockTrim);
+    rtt_init_print!(NoBlockTrim);
     if let (Some(p), Some(cp)) = (stm32::Peripherals::take(), Peripherals::take()) {
         // Constrain clocking registers
+        // let mut flash = p.FLASH;
         let rcc = p.RCC.constrain();
-        let clocks = rcc.cfgr.sysclk(84.mhz()).freeze();
-
+        let clocks = rcc.cfgr.sysclk(36.mhz()).freeze();
 
         let gpioa = p.GPIOA.split();
         let sck = gpioa.pa5.into_alternate_af5();
         let miso = gpioa.pa6.into_alternate_af5();
-        let mosi = gpioa.pa7.into_push_pull_output();
+        let mosi = gpioa.pa7.into_alternate_af5();
 
-        // let ss = gpioa.pa4.into_push_pull_output();
-        // let ss_pin = embedded_hal::digital::v1_compat::OldOutputPin::new(ss);
+        //let timer = Timer::tim1(p.TIM1, MegaHertz(3), clocks);
 
-        let timer = Timer::tim2(p.TIM2, 3020000.hz(), clocks);
-
-        const NUMLEDS: usize = 29;
+        // Configure SPI with 3Mhz rate
+        let spi = Spi::spi1(
+            p.SPI1,
+            (sck, miso, mosi),
+            ws2812::MODE,
+            3_000.khz().into(),
+            clocks,
+        );
+        const NUMLEDS: usize = 30;
         let mut delay = hal::delay::Delay::new(cp.SYST, clocks);
-        let mut data: [RGB8; NUMLEDS] = [RGB8::new(1,1,1); NUMLEDS];
-        let mut blue: [RGB8; NUMLEDS] = [RGB8::new(1,1, 50); NUMLEDS];
-        let empty: [RGB8; NUMLEDS] = [RGB8::new(10,10, 10);  NUMLEDS];
-        let mut ws = Ws2812::new(timer, mosi);
-        let mut start = 1;
+        let mut data: [RGB8; NUMLEDS] = [RGB8::default(); NUMLEDS];
+        let empty: [RGB8; NUMLEDS] = [RGB8::default(); NUMLEDS];
+        let mut ws = Ws2812::new(spi);
+        let mut start = 15;
         rprintln!("start {}", start);
         loop {
+            for i in 0..data.len() - 1 {
+                data[i] = wheel(((255 / NUMLEDS) * ((i + start) % NUMLEDS)) as u8);
+            }
+
+            rprintln!("Write colors. {}", start);
+            for start in 0..NUMLEDS - 1 {
+                for i in 0..data.len() - 1 {
+                    data[i] = wheel(((255 / NUMLEDS) * ((i + start) % NUMLEDS)) as u8);
+                }
+                if let Err(e) = ws.write(brightness(gamma(data.iter().cloned()), 0x0f)) {
+                    //if let Err(e) = ws.write(data.iter().cloned()) {
+                    rprintln!("error {:?}", e);
+                };
+                delay.delay_ms(150 as u16);
+            }
+            //
+            // if let Err(e) = ws.write(brightness(gamma(data.iter().cloned()),0x0f)) {
+            //     //if let Err(e) = ws.write(data.iter().cloned()) {
+            //     rprintln!("error2 {:?}", e);
+            // };
+            //
+            // rprintln!("Sleep.");
+            // delay.delay_ms(1000 as u16);
+            // rprintln!("Write zeros.");
             // if let Err(e) = ws.write(empty.iter().cloned()){
             //     rprintln!("error {:?}", e);
             // };
-
-
-            for i in 0..data.len()-1 {
-                data[i] = wheel(((255 / NUMLEDS) * ((i+start)%NUMLEDS)) as u8);
-            }
-            start = start+1;
-            if start >= NUMLEDS {
-                start = 0;
-            }
-
-
-            // data[0] = RGB8 {
-            //     r: 0xff,
-            //     g: 0x0,
-            //     b: 0xff
-            // };
-            // data[1] = RGB8 {
-            //     r: 0xff,
-            //     g: 0xff,
-            //     b: 0x00,
-            // };
-            // data[2] = RGB8 {
-            //     r: 0x0,
-            //     g: 0xff,
-            //     b: 0x0
-            // };
-            // data[3] = RGB8 {
-            //     r: 0x0,
-            //     g: 0x0,
-            //     b: 0xff,
-            // };
-            if let Err(e) = ws.write(empty.iter().cloned()){
-                rprintln!("error {:?}", e);
-            };
-            delay.delay_ms(2000 as u16);
-
-            rprintln!("Write colors. {}", start);
-            if let Err(e) = ws.write(blue.iter().cloned()) {
-            //if let Err(e) = ws.write(brightness(gamma(blue.iter().cloned()),0x10)) {
-                //if let Err(e) = ws.write(data.iter().cloned()) {
-                rprintln!("error {:?}", e);
-            };
-
-            rprintln!("Sleep.");
-            delay.delay_ms(1000 as u16);
-            rprintln!("Write zeros.");
-            // // if let Err(e) = ws.write(empty.iter().cloned()){
-            // //     rprintln!("error {:?}", e);
-            // // };
             // rprintln!("Sleep.");
-            // delay.delay_ms(2000 as u16);
+            // delay.delay_ms(1000 as u16);
         }
     }
     loop {

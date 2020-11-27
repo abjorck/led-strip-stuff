@@ -15,8 +15,9 @@ panic-rtt-core = "0.2.1"
 bare-metal = "1.0.0"
 smart-leds = "0.3.0"
 [dependencies.ws2812-spi]
+git = "https://github.com/abjorck/ws2812-spi-rs"
 version = "0.3.0"
-# features = ["mosi_idle_high"]
+features = ["mosi_idle_high"]
 
 [dependencies.ws2812-timer-delay]
 version = "0.3.0"
